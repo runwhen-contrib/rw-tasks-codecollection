@@ -1,0 +1,210 @@
+# rw-tasks-codecollection: the rw-task capability image.
+#
+# Image == capability, 1:1 (runwhen_capability/loader.py's
+# discover_capability_dir docstring) -- but rw-task is not a capability with
+# tasks of its own. It is the generic runtime every custom capability
+# compiles onto: what actually runs at request time (a workspace author's
+# own `capability.yaml` and task files) rides inside the request as a small,
+# content-hashed bundle, not inside this image. See
+# capabilities/rw-task/README.md for that flow end to end.
+#
+# It ships:
+#   - the runwhen_capability SDK and its rwtask task host, which loads and
+#     runs a request's bundle -- the release pyproject.toml pins;
+#   - bash, kubectl, jq, yq, curl, the PostgreSQL client (psql) and
+#     redis-cli -- the interpreters and CLIs a bundle's own bash/Python
+#     tasks may invoke;
+#   - capabilities/rw-task/ itself: a manifest with no tasks (see its
+#     header comment) and a tasks.py that registers none.
+#
+# Every tool is pinned AND verified, by one of three mechanisms:
+#
+#   apt      -> scripts/apt-packages.txt (name=version, one per line);
+#     scanners read the dpkg database directly, so no separate SBOM entry
+#     is needed for these.
+#   GitHub release binaries (kubectl, yq -- Debian's own `yq` package is an
+#     unrelated Python/jq wrapper, not this one) -> sbom/tools.cdx.json
+#     (CycloneDX 1.6), installed by scripts/install_tools.sh, which
+#     verifies each download's sha256 against the SBOM. A statically linked
+#     binary in /usr/local/bin is INVISIBLE to any scanner that reads a
+#     package database, so the SBOM's PURL per component is what makes
+#     these two CVE-matchable at all.
+#   runwhen-capability (the SDK) -- pinned to a release tag, here and in
+#     pyproject.toml. pip's --require-hashes mode does not support VCS
+#     requirements at all, so this is installed in its OWN,
+#     non-hash-checked `pip install` step, same as every other capability
+#     image in this organisation installs its SDK layer.
+#
+# Base image pinned by digest -- `python:3.12-slim`, resolved with
+# `docker buildx imagetools inspect python:3.12-slim` on 2026-09-28. This is
+# the multi-arch INDEX digest (covers both linux/amd64 and linux/arm64,
+# which is what CI's build matrix builds), not a single-platform manifest
+# digest. Re-resolve and bump when the base needs an update.
+ARG BASE_IMAGE=python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
+
+# ---------------------------------------------------------------------------
+# builder -- only used to `pip install` the SDK from its pinned git tag,
+# which needs `git` on PATH. rw-task's own tasks never shell out to git (a
+# bundle's tasks might invoke it, but only if a workspace author's own task
+# file does -- and this image doesn't ship it, so it can't), so `git` never
+# reaches the final image: one less binary a bundle's task code could reach
+# for. An isolated venv, not the base image's system site-packages: the
+# final stage copies this directory verbatim and nothing else, so what's
+# installed here is exactly (and only) what ships.
+# ---------------------------------------------------------------------------
+FROM ${BASE_IMAGE} AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY scripts/apt-packages.txt /build/apt-packages.txt
+RUN apt-get update \
+    && grep -E '^(git|ca-certificates)=' /build/apt-packages.txt | xargs apt-get install -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# The SDK, at the release pyproject.toml pins -- see the header comment
+# above for why this is a separate, non-hash-checked install step. Nothing
+# of this project's own is copied in: it has no importable package (see
+# pyproject.toml's `[tool.setuptools] packages = []`), so installing it
+# here would add nothing this stage doesn't already have.
+WORKDIR /app
+COPY pyproject.toml README.md LICENSE /app/
+RUN pip install --no-cache-dir /app
+
+# ---------------------------------------------------------------------------
+# final -- the shipped image. No git, no C toolchain, no build-time apt
+# state beyond what's declared as a genuine runtime tool below.
+# ---------------------------------------------------------------------------
+FROM ${BASE_IMAGE} AS final
+ARG TARGETARCH
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# bash, ca-certificates, curl, jq, postgresql-client (psql), redis-tools
+# (redis-cli) -- every runtime tool this image promises except kubectl and
+# yq (below). `bash` is pinned and reinstalled explicitly even though the
+# base image already ships a bash, so its exact version is recorded the
+# same way as everything else here (see scripts/apt-packages.txt's header).
+# `curl` and `jq` double as build-time tools for the kubectl/yq install
+# step right below -- there is no separate builder stage for them because
+# they ship at runtime anyway.
+COPY scripts/apt-packages.txt /build/apt-packages.txt
+RUN apt-get update \
+    && grep -v '^#' /build/apt-packages.txt | grep -v '^$' | xargs apt-get install -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+# kubectl + yq, sha256-verified per architecture against the SBOM.
+# Installing from the SBOM rather than from tools/tools.yaml is deliberate:
+# a version bumped in tools.yaml but not re-hashed by
+# scripts/gen_tool_sbom.py still carries the old URL and hash here, so it
+# cannot reach an image.
+COPY sbom/tools.cdx.json /build/sbom/tools.cdx.json
+COPY scripts/install_tools.sh /build/scripts/install_tools.sh
+RUN TARGETARCH="${TARGETARCH}" SBOM=/build/sbom/tools.cdx.json \
+      sh /build/scripts/install_tools.sh \
+    && rm -rf /build
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# --- OCI image annotations (opencontainers.org/image-spec) -------------------
+# Standard keys registries and scanners read: `source` and `revision` are what
+# let a scan result be traced back to the commit that produced the image, and
+# what an SBOM consumer uses to correlate this image with sbom/tools.cdx.json.
+# REVISION/CREATED are build args because they are the only two values that
+# cannot be known from the source tree alone; CI passes them.
+ARG REVISION=unknown
+ARG CREATED=unknown
+LABEL org.opencontainers.image.title="rw-task" \
+      org.opencontainers.image.description="Generic runtime image for custom capabilities on the RunWhen platform" \
+      org.opencontainers.image.source="https://github.com/runwhen-contrib/rw-tasks-codecollection" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      io.runwhen.capability="rw-task" \
+      io.runwhen.sbom="/usr/share/rw-task/tools.cdx.json"
+
+# Keep the tool SBOM IN the image, not only in the repo -- a registry scanner
+# handed the image alone otherwise has no way to learn about the two
+# statically linked binaries in /usr/local/bin; they have no dpkg record.
+COPY sbom/tools.cdx.json /usr/share/rw-task/tools.cdx.json
+
+# Base64 of capabilities/rw-task/manifest.yaml, produced at build time by
+# `rwtask label capabilities/rw-task`. This is how the catalog discovers this
+# capability's manifest without a platform release: it reads the label off
+# the pushed image, never a repo checkout.
+ARG CAPABILITY_MANIFEST_B64=""
+LABEL com.runwhen.capability.manifest.v1="${CAPABILITY_MANIFEST_B64}"
+
+# rw-task ships no schemas/ (it has no task outputs of its own -- see
+# capabilities/rw-task/README.md), so this is always empty. Declared anyway
+# for parity with every other capability image, so a catalog reader can
+# depend on the label always being present.
+ARG CAPABILITY_SCHEMAS_B64=""
+LABEL com.runwhen.capability.schemas.v1="${CAPABILITY_SCHEMAS_B64}"
+
+# A JSON list of {"name", "version"} for every binary and Python library
+# this image ships (apt packages, kubectl/yq, and everything `pip install`
+# above pulled in), base64-encoded the same way as the two labels above.
+# GENERATED -- do not hand-edit this line: `make toolbox-label` recomputes
+# it from scripts/apt-packages.txt, tools/tools.yaml and a clean `pip
+# install` of this project, and CI's `make toolbox-label-check` fails if it
+# has drifted. It is computed ahead of `docker build` and checked in,
+# rather than assembled inside this Dockerfile, because the reusable image
+# workflow this repo's CI calls builds with a fixed set of build args (see
+# .github/workflows/build-push.yaml) that has no slot for a fifth,
+# image-specific one -- see scripts/gen_toolbox_label.py's header for the
+# full reasoning.
+LABEL com.runwhen.rw-task.toolbox="W3sibmFtZSI6ImFubm90YXRlZC10eXBlcyIsInZlcnNpb24iOiIwLjguMCJ9LHsibmFtZSI6ImF0dHJzIiwidmVyc2lvbiI6IjI2LjEuMCJ9LHsibmFtZSI6ImJhc2giLCJ2ZXJzaW9uIjoiNS4yLjM3LTIrYjEwIn0seyJuYW1lIjoiY2EtY2VydGlmaWNhdGVzIiwidmVyc2lvbiI6IjIwMjUwNDE5In0seyJuYW1lIjoiY2VydGlmaSIsInZlcnNpb24iOiIyMDI2LjcuMjIifSx7Im5hbWUiOiJjaGFyc2V0LW5vcm1hbGl6ZXIiLCJ2ZXJzaW9uIjoiMy41LjEifSx7Im5hbWUiOiJjdXJsIiwidmVyc2lvbiI6IjguMTQuMS0yK2RlYjEzdTUifSx7Im5hbWUiOiJpZG5hIiwidmVyc2lvbiI6IjMuMjAifSx7Im5hbWUiOiJqcSIsInZlcnNpb24iOiIxLjcuMS02K2RlYjEzdTQifSx7Im5hbWUiOiJqc29uc2NoZW1hIiwidmVyc2lvbiI6IjQuMjYuMCJ9LHsibmFtZSI6Impzb25zY2hlbWEtc3BlY2lmaWNhdGlvbnMiLCJ2ZXJzaW9uIjoiMjAyNS45LjEifSx7Im5hbWUiOiJrdWJlY3RsIiwidmVyc2lvbiI6IjEuMzcuMSJ9LHsibmFtZSI6InBpcCIsInZlcnNpb24iOiIyNi4yLjEifSx7Im5hbWUiOiJwb3N0Z3Jlc3FsLWNsaWVudCIsInZlcnNpb24iOiIxNysyNzgifSx7Im5hbWUiOiJweWRhbnRpYyIsInZlcnNpb24iOiIyLjEzLjUifSx7Im5hbWUiOiJweWRhbnRpY19jb3JlIiwidmVyc2lvbiI6IjIuNDYuNSJ9LHsibmFtZSI6IlB5WUFNTCIsInZlcnNpb24iOiI2LjAuMyJ9LHsibmFtZSI6InJlZGlzLXRvb2xzIiwidmVyc2lvbiI6IjU6OC4wLjItMytkZWIxM3UyIn0seyJuYW1lIjoicmVmZXJlbmNpbmciLCJ2ZXJzaW9uIjoiMC4zNy4wIn0seyJuYW1lIjoicmVxdWVzdHMiLCJ2ZXJzaW9uIjoiMi4zNC4yIn0seyJuYW1lIjoicnBkcy1weSIsInZlcnNpb24iOiIyMDI2LjYuMyJ9LHsibmFtZSI6InJ1bndoZW4tY2FwYWJpbGl0eSIsInZlcnNpb24iOiIwLjEuMCJ9LHsibmFtZSI6InR5cGluZy1pbnNwZWN0aW9uIiwidmVyc2lvbiI6IjAuNC40In0seyJuYW1lIjoidHlwaW5nX2V4dGVuc2lvbnMiLCJ2ZXJzaW9uIjoiNC4xNi4wIn0seyJuYW1lIjoidXJsbGliMyIsInZlcnNpb24iOiIyLjguMCJ9LHsibmFtZSI6InlxIiwidmVyc2lvbiI6IjQuNTMuNiJ9XQ=="
+WORKDIR /app
+COPY capabilities/rw-task /app/capabilities/rw-task
+
+# Non-root. The work directory lives under /tmp rather than this
+# organisation's usual /work: rw-task's bundle host writes each request's
+# files to a fresh scratch directory (platform contract for the bundle
+# host), and /tmp is the directory most likely to be a tmpfs-backed,
+# writable mount under an otherwise read-only root filesystem -- the pod
+# hardening this image is built to be compatible with (also: no
+# ServiceAccount token automount, set in manifest.yaml's
+# execution.serviceAccountToken, and a stateless pod so nothing here is
+# expected to persist across requests). Neither of those two is a Dockerfile
+# concern -- they are pod-spec settings the runner applies -- but this image
+# writes nowhere else, so it works under both.
+#
+# /work -> /tmp/work is a symlink, not a second real directory: `rwtask
+# serve`'s own --workdir flag still defaults to /work (runwhen_capability's
+# own default, shared by every capability image), and the reusable
+# capability-image workflow's smoke test invokes `rwtask serve` with no
+# --workdir override at all -- so /work must still resolve to something
+# writable even though this image's own CMD always passes --workdir
+# /tmp/work explicitly. This relies on /tmp/work (created below, at build
+# time) surviving into the running container -- true for a plain `docker
+# run` and for a real pod, where the runner never overrides this image's own
+# CMD (EXECUTOR-CONTRACT.md: it launches the image with no args, injecting
+# only env vars), so --workdir /tmp/work is always what actually runs and
+# creates /tmp/work itself via its own mkdir(parents=True) if the mount is
+# fresh. The symlink only matters for the one case that never sets
+# --workdir explicitly -- the smoke test above -- where /tmp is never
+# remounted either.
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin runwhen \
+    && mkdir -p /tmp/work \
+    && ln -s /tmp/work /work \
+    && chown -R runwhen:runwhen /tmp/work /app
+USER runwhen
+
+# rwtask's argv IS the container command -- no Robot runtime, nothing to
+# reset. ENTRYPOINT [] is kept explicit (rather than simply absent) so a
+# `docker run <image> <anything>` never surprises anyone who expects the
+# rw-base-runtime convention from this organisation's other collections.
+#
+# --capability-dir is baked in explicitly rather than left to
+# discover_capability_dir's default, for the same reason every other
+# capability image in this organisation does this: the image's own argv
+# must never rely on "there happens to be exactly one
+# capabilities/*/manifest.yaml" being true.
+ENTRYPOINT []
+CMD ["rwtask", "serve", "--capability-dir", "/app/capabilities/rw-task", "--workdir", "/tmp/work"]
