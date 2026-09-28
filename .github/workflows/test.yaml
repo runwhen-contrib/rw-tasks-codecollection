@@ -1,0 +1,73 @@
+name: Smoke Test
+
+# A single-arch, no-push build of rw-task, running scripts/smoke_test.py
+# against it directly -- the fast path for the two fixture bundles under
+# tests/fixtures/ (see that script's own header for exactly what it checks:
+# the toolbox and capability-manifest labels, and one bash task plus one
+# Python task actually running through the bundle host).
+#
+# build-push.yaml's `image` job runs the SAME script, as the reusable
+# capability-image workflow's `smoke-command`, but only after a full
+# multi-arch buildx build with GHCR credentials. This workflow needs
+# neither: it builds once, for the runner's own architecture, so a bundle
+# regression is caught on every push and every fork's pull request without
+# waiting on that heavier build or requiring registry access.
+
+on:
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install (for rwtask label)
+        run: python3 -m pip install --quiet .
+
+      - name: Compute the image labels
+        id: labels
+        run: |
+          set -euo pipefail
+          {
+            echo "manifest_b64=$(rwtask label capabilities/rw-task)"
+            echo "schemas_b64=$(rwtask label --schemas capabilities/rw-task)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          docker build \
+            -f Dockerfile.rw-task \
+            -t rw-task:smoke \
+            --build-arg REVISION="${GITHUB_SHA}" \
+            --build-arg CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --build-arg CAPABILITY_MANIFEST_B64="${{ steps.labels.outputs.manifest_b64 }}" \
+            --build-arg CAPABILITY_SCHEMAS_B64="${{ steps.labels.outputs.schemas_b64 }}" \
+            .
+
+      - name: Smoke test
+        run: python3 scripts/smoke_test.py rw-task:smoke

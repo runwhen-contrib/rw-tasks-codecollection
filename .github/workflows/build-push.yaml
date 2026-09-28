@@ -1,0 +1,117 @@
+name: Build And Push
+
+# Builds this repo's one capability image -- rw-task (stateless) -- and
+# pushes a multi-arch manifest to GHCR.
+#
+# `test` lints this repo and checks that the checked-in
+# com.runwhen.rw-task.toolbox label (Dockerfile.rw-task) matches what
+# scripts/gen_toolbox_label.py would generate right now; `image` depends on
+# it so a stale label or a lint failure never reaches an image push.
+#
+# `image` calls runwhen-capability's reusable capability-image workflow. It
+# computes the tags, checks the manifest, bakes in the
+# com.runwhen.capability.manifest.v1 / schemas.v1 labels from `rwtask
+# label`, builds natively on amd64 and arm64, smoke-tests the image (this
+# repo's own scripts/smoke_test.py, via `smoke-command`) and pushes. Tags:
+#
+#     <sanitized-ref>-<sha7>   every branch build (plus <ref>, and latest on main)
+#     pr-<n>-<sha7>            pull requests (plus pr-<n>)
+#
+# The reusable workflow's own tag (@v0.1.0 below) and the runwhen-capability
+# RUNTIME dependency pin in pyproject.toml / Dockerfile.rw-task are
+# deliberately independent: the former is this repo's CI orchestration (image
+# build, labels, smoke test, push) and tracks whichever runwhen-capability
+# release last touched it; the latter is what `rwtask` this image actually
+# runs, pinned to the release that ships bundle-mode support. Bump each when
+# its own thing changes, not in lockstep.
+#
+# Build triggers:
+#   - push to ANY branch  -> an image for that branch, a version the catalog can pin
+#   - pull_request to ANY base branch -> a "pr-<n>" preview image (a fork's PR builds
+#                                        and smoke-tests, but does not push)
+#   - workflow_dispatch  -> manual build
+#
+# Path filters below skip rebuilds for pure docs / config-only diffs.
+
+on:
+  push:
+    branches:
+      - '**'            # all branches; tag pushes (refs/tags/*) are excluded
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+  pull_request:
+    # No branches: restriction -> triggers on PRs targeting any base branch
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push the resulting image to GHCR."
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  # ===========================================================================
+  # test — this repo's own (small) pytest suite, lint, and the toolbox-label
+  # freshness check. `image` depends on it so a stale label or a lint/test
+  # failure never reaches an image push. No `rwtask schemas --check` here:
+  # rw-task registers no tasks and exports no output schemas of its own
+  # (capabilities/rw-task/README.md) -- the bundle-execution behaviour that
+  # would otherwise cover is exercised against the built image instead, by
+  # scripts/smoke_test.py in the `image` job below and in
+  # .github/workflows/test.yaml.
+  # ===========================================================================
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: python3 -m pip install --quiet -e ".[dev]"
+
+      - name: pytest
+        run: python3 -m pytest -q
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+      - name: Check the toolbox label is up to date
+        run: make toolbox-label-check
+
+  # ===========================================================================
+  # image -- the shared capability-image workflow, for rw-task.
+  # ===========================================================================
+  image:
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    uses: runwhen-contrib/runwhen-capability/.github/workflows/capability-image.yml@v0.1.0
+    with:
+      capability: rw-task
+      dockerfile: Dockerfile.rw-task
+      image-name: rw-tasks-codecollection
+      execution-mode: stateless
+      sbom: sbom/tools.cdx.json
+      push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+      smoke-command: |
+        python3 scripts/smoke_test.py "${IMG}"
