@@ -1,0 +1,49 @@
+# Fully pinned versions for every transitive Python dependency this image
+# installs -- the runwhen-capability SDK (pyproject.toml's one direct
+# dependency) plus everything it pulls in. Used as a `pip install -c
+# constraints.txt` constraints file by BOTH Dockerfile.rw-task's builder
+# stage and the Makefile's toolbox-label / toolbox-label-check targets, so
+# the com.runwhen.rw-task.toolbox label always reflects the exact same
+# resolution regardless of which machine (or when) `pip`'s resolver runs.
+#
+# Versions only, deliberately -- not a hash-locked, single-wheel-per-package
+# file (`pip freeze` records names/versions, not per-platform wheel hashes).
+# A version pin here still fixes the toolbox label everywhere: PyPI
+# publishes a package's compiled-extension releases (pydantic_core, rpds-py
+# here) as one release with wheels for every supported platform/interpreter
+# ABI, so the SAME version resolves on macOS/arm64, macOS/x86_64 and
+# linux/amd64 alike -- pip picks whichever wheel matches the platform it's
+# running on, but the {name, version} pair the label records is identical
+# either way. This is what makes the constraint set platform-neutral even
+# though this file itself is generated on one specific platform below.
+#
+# runwhen-capability itself is deliberately NOT listed here: pip constraints
+# files don't support VCS requirements (a constraint line for it parses with
+# no usable version, and then conflicts with the git+ pin pip resolves from
+# pyproject.toml's own direct dependency -- `pip install -c constraints.txt
+# .` fails outright otherwise). It doesn't need to be: pyproject.toml
+# already pins it to an exact release tag, which pip resolves to the same
+# commit every time on its own, VCS pins just aren't expressible as a
+# constraint.
+#
+# Regenerate with `make constraints` after bumping the runwhen-capability
+# pin in pyproject.toml (or any time PyPI's resolution for one of these
+# changes) -- see that Makefile target for exactly how. Then run `make
+# toolbox-label` and commit both files together.
+annotated-types==0.8.0
+attrs==26.1.0
+certifi==2026.7.22
+charset-normalizer==3.5.1
+idna==3.20
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+pip==25.0.1
+pydantic==2.13.5
+pydantic_core==2.46.5
+PyYAML==6.0.3
+referencing==0.37.0
+requests==2.34.2
+rpds-py==2026.6.3
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.8.0
