@@ -41,9 +41,22 @@ make toolbox-label         # recompute it and rewrite Dockerfile.rw-task
 make toolbox-label-check   # fail if it has drifted (what CI runs)
 ```
 
-Both targets run in a throwaway venv (`pip install .`, nothing extra), so the Python-library part
-of the label always matches what the image itself installs -- never whatever else happens to be in
-a developer's own environment.
+Both targets run in a throwaway venv (`pip install -c constraints.txt .`, nothing extra), so the
+Python-library part of the label always matches what the image itself installs -- never whatever
+else happens to be in a developer's own environment.
+
+`constraints.txt` pins every one of those transitive dependencies to an exact version, resolved for
+linux/Python 3.12 (the same base image `Dockerfile.rw-task`'s builder stage installs into) --
+without it, `pip`'s resolver is free to pick whatever the newest compatible release of each is at
+install time, which made the label drift depending on which machine (and when) `make
+toolbox-label-check` ran. Regenerate it with:
+
+```
+make constraints   # re-resolve constraints.txt, then run `make toolbox-label` and commit both
+```
+
+which resolves inside a throwaway `python:3.12-slim` container rather than the caller's own
+Python/OS/arch, for the same reason the toolbox-label targets use a throwaway venv.
 
 ## Hardening
 
