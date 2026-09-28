@@ -1,0 +1,105 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "container",
+      "name": "rw-tasks-codecollection",
+      "description": "GitHub-release binaries bundled into the rw-task capability image"
+    },
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "gen_tool_sbom.py",
+          "version": "1.0"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "kubectl",
+      "version": "1.37.1",
+      "purl": "pkg:github/kubernetes/kubernetes@v1.37.1",
+      "scope": "required",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://dl.k8s.io/release/v1.37.1/bin/linux/amd64/kubectl",
+          "comment": "linux/amd64",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "65691ff77eb6fa44c908b77a1082c9f092c3b9733b5cefabec0d1104890e21a8"
+            }
+          ]
+        },
+        {
+          "type": "distribution",
+          "url": "https://dl.k8s.io/release/v1.37.1/bin/linux/arm64/kubectl",
+          "comment": "linux/arm64",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "ff749f4b78d9c4f1ec87307df9b50119ed819e2094aa9810cb9acffc3286c8c7"
+            }
+          ]
+        }
+      ],
+      "properties": [
+        {
+          "name": "rw:archive-kind",
+          "value": "binary"
+        },
+        {
+          "name": "rw:binary-name",
+          "value": "kubectl"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "yq",
+      "version": "4.53.6",
+      "purl": "pkg:github/mikefarah/yq@v4.53.6",
+      "scope": "required",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64",
+          "comment": "linux/amd64",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385"
+            }
+          ]
+        },
+        {
+          "type": "distribution",
+          "url": "https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_arm64",
+          "comment": "linux/arm64",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09"
+            }
+          ]
+        }
+      ],
+      "properties": [
+        {
+          "name": "rw:archive-kind",
+          "value": "binary"
+        },
+        {
+          "name": "rw:binary-name",
+          "value": "yq"
+        }
+      ]
+    }
+  ]
+}
