@@ -47,14 +47,20 @@ a developer's own environment.
 
 ## Hardening
 
-- **Non-root.** The image creates and runs as `runwhen` (uid 1000); nothing in it needs root at
-  runtime.
-- **A `/tmp`-rooted work directory**, not this organisation's usual `/work`: rw-task's bundle host
-  writes each request's files to a fresh scratch directory, and `/tmp` is the directory most likely
-  to be a writable, tmpfs-backed mount under an otherwise read-only root filesystem -- the pod
-  hardening this image is built to be compatible with, even though the pod's own security context
-  (read-only root filesystem, no ServiceAccount token automount) is a runner/pod-spec concern
-  outside this repo, not something a Dockerfile sets.
+- **Non-root by default** (`runwhen`, uid 1000) for a plain `docker run`, but nothing in the image
+  depends on that uid owning anything: the runner's real executor pod spec runs this container as
+  uid 65532 instead, with a read-only root filesystem and only `/work` (a pool-provided `emptyDir`)
+  mounted writable -- no `/tmp` at all. `/app` and the SDK's venv stay at the ordinary
+  world-readable/executable permissions `COPY`/`pip install` already leave them at, which is all any
+  uid needs to read and run them.
+- **`/work`**, this organisation's usual work directory, matching the runner's real pod spec
+  exactly -- both `rwtask serve --workdir` and the runner's own `emptyDir` mount point. `TMPDIR` is
+  set to `/work/tmp`, mkdir'd at container start (the SDK's own `serve()` only creates `--workdir`
+  itself, never a `tmp` child of it), so anything that falls back to the platform temp dir --
+  a bundle task's own `mktemp`, say -- lands somewhere writable too, since there is no writable
+  `/tmp` anywhere in the real pod spec. The pod's own security context (read-only root filesystem,
+  no ServiceAccount token automount) is a runner/pod-spec concern outside this repo, not something a
+  Dockerfile sets, but this image writes nowhere but `/work`, so it works under it.
 - **`execution.serviceAccountToken: false`** in `capabilities/rw-task/manifest.yaml`, explicit even
   though it is already the platform default: this image executes arbitrary, unreviewed third-party
   task code, so it must never carry a projected ServiceAccount token letting that code reach the

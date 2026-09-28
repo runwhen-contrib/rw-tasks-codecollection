@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Smoke-test a built rw-task image: the two labels every consumer of this
 image reads, and the bundle host actually running a task from each of the
-two fixture bundles under tests/fixtures/, under the same read-only root
-filesystem + tmpfs `/tmp` hardening the image is built for.
+two fixture bundles under tests/fixtures/, under the runner's own real
+executor pod spec -- uid 65532, a read-only root filesystem, and a writable
+`/work` (see executor_pool.go's BuildExecutorPod), with no writable `/tmp`
+anywhere.
 
 The image's own manifest/schemas smoke checks (rwtask --help, the capability
 manifest label, `rwtask serve` logging that it loaded rw-task) are the
 reusable capability-image workflow's job, not this script's -- see
 .github/workflows/build-push.yaml's `smoke-command`. This script covers what
 that workflow cannot know how to check: that rw-task's bundle host actually
-runs a bash task and a Python task end to end (see run_bundle_task's own
-docstring for why that runs `--read-only`/`--tmpfs`), and that the
+runs a bash task and a Python task end to end under that pod spec (see
+run_bundle_task's own docstring for why), that a bundle request is refused
+when this executor was not started with --allow-bundles (see
+check_bundle_refused_without_allow_bundles), and that the
 com.runwhen.rw-task.toolbox label this repo generates (see
 scripts/gen_toolbox_label.py) is present and well-formed on the image it
 describes.
@@ -101,25 +105,38 @@ def check_capability_label(image: str) -> None:
 def run_bundle_task(image: str, bundle: str, task: str, inputs: dict) -> dict:
     """`rwtask run --local` against one fixture bundle, mounted read-only
     into the container -- the same code path `rwtask serve` runs a bundle
-    request through, with no relay involved.
+    request through, with no relay involved. `--local` bypasses
+    --allow-bundles entirely (that gate is `rwtask serve`-only -- see
+    check_bundle_refused_without_allow_bundles), so this exercises the
+    bundle host itself, not the flag.
 
-    Run under `--read-only` with a fresh `--tmpfs /tmp`, not a plain `docker
-    run`: this is the pod hardening `capabilities/rw-task/manifest.yaml` and
-    `Dockerfile.rw-task` are built for (a read-only root filesystem, a
-    tmpfs-backed /tmp), and it's the one scenario that would NOT be caught by
-    building the image alone -- the bundle host has to actually write each
-    request's scratch files somewhere under a filesystem that starts empty
-    at container start, not whatever happened to survive from the image's
-    own build layer.
+    Run under the runner's own real executor pod spec, not a plain `docker
+    run`: `--user 65532:65532`, `--read-only`, and a writable `/work` via
+    `--tmpfs` -- no writable `/tmp` anywhere, matching executor_pool.go's
+    BuildExecutorPod exactly. This is the one scenario that would NOT be
+    caught by building the image alone -- the bundle host has to actually
+    write each request's scratch files somewhere under a filesystem that
+    starts empty at container start, not whatever happened to survive from
+    the image's own build layer, as any uid, not just the image's own.
+
+    `--workdir /work/scratch` is passed explicitly rather than left to
+    `run --local`'s own default (a fresh `tempfile.mkdtemp()`, rooted at
+    $TMPDIR): the image sets TMPDIR=/work/tmp, but nothing creates that
+    directory when CMD is overridden like this -- see Dockerfile.rw-task's
+    TMPDIR comment. An explicit --workdir sidesteps that entirely, and
+    `run --local` never deletes a caller-supplied one (run_local.py:
+    `owns_workdir = workdir is None`).
     """
     proc = subprocess.run(
         [
             "docker",
             "run",
             "--rm",
+            "--user",
+            "65532:65532",
             "--read-only",
             "--tmpfs",
-            "/tmp:rw,uid=1000,gid=1000",
+            "/work:rw,uid=65532,gid=65532",
             "-v",
             f"{FIXTURES}:/fixtures:ro",
             image,
@@ -131,6 +148,8 @@ def run_bundle_task(image: str, bundle: str, task: str, inputs: dict) -> dict:
             task,
             "--inputs",
             json.dumps(inputs),
+            "--workdir",
+            "/work/scratch",
         ],
         capture_output=True,
         text=True,
@@ -174,13 +193,121 @@ def check_python_bundle(image: str) -> None:
     print("python-bundle/count-chars: ok, outputs match")
 
 
+# Drives `rwtask serve` for exactly one poll, against a fake `requests.Session`
+# rather than a real relay: --allow-bundles gates `serve`, not `run --local`
+# (see run_bundle_task's docstring), so this is the only way to exercise the
+# refusal without standing up a relay + executor token inside the test. The
+# fake session hands back one bundle-shaped "next task" response, then
+# records what gets posted back as the result.
+_BUNDLE_REFUSAL_SCRIPT = """
+from pathlib import Path
+
+from runwhen_capability.serve import BUNDLES_NOT_ALLOWED, serve
+
+workdir = Path("/work/refusal-scratch")
+token_file = Path("/work/fake-token")
+token_file.write_text("smoke-test-token\\n")
+
+bundle_task = {
+    "requestId": "smoke-refused-1",
+    "scopeId": "smoke-refused-scope",
+    "deadlineMs": 5000,
+    "credentials": {},
+    "request": {"bundle": {"hash": "0" * 64, "files": []}, "tasks": [], "inputs": {}},
+}
+
+
+class FakeResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class FakeSession:
+    def __init__(self):
+        self.calls = []
+
+    def post(self, url, json=None, timeout=None, headers=None):
+        self.calls.append((url, json))
+        if url.endswith("/v1/tasks/next"):
+            return FakeResponse(200, bundle_task)
+        return FakeResponse(200, {})
+
+
+session = FakeSession()
+serve(
+    relay="http://fake-relay.invalid",
+    pool_id="smoke-pool",
+    workdir=workdir,
+    capability_dir=Path("/app/capabilities/rw-task"),
+    token_file=token_file,
+    session=session,
+    max_iterations=1,
+    allow_bundles=False,
+)
+
+results = [payload for url, payload in session.calls if url.endswith("/result")]
+assert len(results) == 1, f"expected exactly one result post, got {results!r}"
+payload = results[0]
+assert payload["status"] == "failed", payload
+assert payload["error"] == BUNDLES_NOT_ALLOWED, payload
+assert not any(workdir.iterdir()), "a refused bundle request must not create a scope"
+print("REFUSED_OK")
+"""
+
+
+def check_bundle_refused_without_allow_bundles(image: str) -> None:
+    """A bundle request reaching `rwtask serve` when this executor was not
+    started with --allow-bundles gets a failed result naming
+    BUNDLES_NOT_ALLOWED, no scope directory created, and the bundle host
+    never called (serve.py's `_poll_once`) -- this is the property this
+    image's own default CMD relies on being the OPPOSITE of (it always
+    passes --allow-bundles); this check would catch that flag silently
+    disappearing from CMD again. Run under the same hardened flags as the
+    bundle-execution checks above.
+    """
+    proc = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--user",
+            "65532:65532",
+            "--read-only",
+            "--tmpfs",
+            "/work:rw,uid=65532,gid=65532",
+            image,
+            "python3",
+            "-c",
+            _BUNDLE_REFUSAL_SCRIPT,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or "REFUSED_OK" not in proc.stdout:
+        raise SmokeTestFailure(
+            "a bundle request without --allow-bundles was not refused as expected\n"
+            f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+        )
+    print("bundle request without --allow-bundles: refused as expected")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} <image>", file=sys.stderr)
         return 2
     image = sys.argv[1]
 
-    checks = [check_toolbox_label, check_capability_label, check_bash_bundle, check_python_bundle]
+    checks = [
+        check_toolbox_label,
+        check_capability_label,
+        check_bash_bundle,
+        check_python_bundle,
+        check_bundle_refused_without_allow_bundles,
+    ]
     failures = []
     for check in checks:
         try:

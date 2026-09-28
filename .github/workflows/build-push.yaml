@@ -17,13 +17,14 @@ name: Build And Push
 #     <sanitized-ref>-<sha7>   every branch build (plus <ref>, and latest on main)
 #     pr-<n>-<sha7>            pull requests (plus pr-<n>)
 #
-# The reusable workflow's own tag (@v0.1.0 below) and the runwhen-capability
+# The reusable workflow's own tag (@v0.2.0 below) and the runwhen-capability
 # RUNTIME dependency pin in pyproject.toml / Dockerfile.rw-task are
 # deliberately independent: the former is this repo's CI orchestration (image
 # build, labels, smoke test, push) and tracks whichever runwhen-capability
 # release last touched it; the latter is what `rwtask` this image actually
-# runs, pinned to the release that ships bundle-mode support. Bump each when
-# its own thing changes, not in lockstep.
+# runs, pinned to the release that ships bundle-mode support. They currently
+# match because v0.2.0 touched both, not because they're pinned together --
+# bump each when its own thing changes, not in lockstep.
 #
 # Build triggers:
 #   - push to ANY branch  -> an image for that branch, a version the catalog can pin
@@ -105,7 +106,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: runwhen-contrib/runwhen-capability/.github/workflows/capability-image.yml@v0.1.0
+    uses: runwhen-contrib/runwhen-capability/.github/workflows/capability-image.yml@v0.2.0
     with:
       capability: rw-task
       dockerfile: Dockerfile.rw-task
