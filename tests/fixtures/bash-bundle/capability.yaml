@@ -1,0 +1,16 @@
+# Minimal bash-task fixture for rw-task's own smoke tests -- not a real,
+# useful capability. One task, no setup, no credentials: just enough to
+# exercise the bundle host end to end (write files, verify hash, load
+# capability.yaml, run one bash task, check its output against its schema).
+apiVersion: runwhen.com/custom-capability/v1
+name: smoke-bash-echo
+description: Echoes a greeting input back as a task output
+tasks:
+  - name: echo-greeting
+    file: tasks/echo_greeting.sh
+    description: Echo the greeting input as a task output
+    readOnly: true
+    inputs:
+      greeting: { type: string, default: "hello from rw-task", runtime: true }
+    outputs:
+      message: { schema: "{ text: string }" }

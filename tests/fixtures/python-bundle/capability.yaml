@@ -1,0 +1,17 @@
+# Minimal Python-task fixture for rw-task's own smoke tests -- not a real,
+# useful capability. One task, no setup, no credentials: just enough to
+# exercise the bundle host end to end (write files, verify hash, load
+# capability.yaml, run one Python task, check its output against its
+# schema).
+apiVersion: runwhen.com/custom-capability/v1
+name: smoke-python-count
+description: Counts the characters in a text input
+tasks:
+  - name: count-chars
+    file: tasks/count_chars.py
+    description: Count the characters in the text input
+    readOnly: true
+    inputs:
+      text: { type: string, default: "hello from rw-task", runtime: true }
+    outputs:
+      length: { schema: "{ count: integer }" }
