@@ -1,0 +1,71 @@
+# Capability manifest for rw-task -- the generic runtime image custom
+# capabilities compile onto. Unlike every other capability image in this
+# organisation, rw-task ships no tasks of its own: what a request actually
+# runs -- a custom capability's `capability.yaml` and its task files -- rides
+# inside the request itself (as a content-hashed bundle of small text files),
+# not inside this image. This manifest exists so the platform's catalog can
+# resolve rw-task's own image reference and scheduling knobs; a compiled
+# custom capability's manifest supplies its own `appliesTo`, `needs` and
+# `tasks` and is what a run is actually matched and validated against.
+#
+# There is no `image` key here: an image cannot know its own digest. This
+# manifest instead rides the image itself, as the OCI label
+# com.runwhen.capability.manifest.v1 (base64 of this file, verbatim) --
+# `rwtask label` produces that value at build time. The digest is owned by
+# the registry/catalog, not this file.
+apiVersion: capability/v1
+capability: rw-task
+version: "0.1.0"
+description: Generic runtime for custom (bundle) capabilities
+
+# --- generic scheduling knobs; the platform forwards these to the runner verbatim -------------
+execution:
+  mode: stateless
+  maxPodsPerPool: 3
+  maxConcurrentPerPod: 4
+  idleTtlSeconds: 900
+  requestTimeoutSeconds: 600
+  # A bundle's own tasks set their own deadline inside this ceiling; these
+  # are pod-level defaults for a generic executor, not tuned to any one
+  # workload the way a dedicated capability's are.
+  resources:
+    cpuRequest: "100m"
+    cpuLimit: "1"
+    memoryRequest: "256Mi"
+    memoryLimit: "1Gi"
+  workSizeLimit: "512Mi"
+  # Explicit even though false is already the platform default: this image
+  # executes arbitrary, unreviewed third-party task code (a workspace
+  # author's own bash/Python), so it must never carry a projected
+  # ServiceAccount token that would let that code reach the cluster's own
+  # API server as the runner's identity.
+  serviceAccountToken: false
+
+# --- which subjects this capability applies to -----------------------------------------
+# Deliberately empty: rw-task is never matched against a resource by its own
+# appliesTo -- a compiled custom capability carries its own, and that is what
+# a run is matched against. This entry exists only so the catalog can resolve
+# an image and pool for a custom capability's tasks to run inside.
+appliesTo: []
+
+# --- what the platform must supply ----------------------------------------------------
+# Empty for the same reason: credentials are declared by each custom
+# capability's own `needs`, resolved by the platform and forwarded onto the
+# bundle request -- never fixed here, since which credentials a run needs
+# depends entirely on which bundle is running.
+needs:
+  credentials: []
+
+# rw-task has no packaged setup of its own -- each request's bundle may
+# declare its own `setup` inside its capability.yaml, run once per request
+# ahead of that bundle's own tasks. Nothing here.
+setup: null
+
+# No packaged tasks -- see the file header. A bundle's own tasks are read
+# from the request envelope's `bundle.files`, validated against its
+# hash, and run inside this same image at request time.
+tasks: []
+
+retention:
+  pod: on_failure                  # all | on_failure | none
+  result: 30d
