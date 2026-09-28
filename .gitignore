@@ -1,0 +1,13 @@
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+dist
+build
+*egg-info
+.DS_Store
+.venv
+.toolbox-venv
+
+# rwtask run's local scope directories, if left with --keep-workdir
+rwtask-run-*/
