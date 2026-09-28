@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Smoke-test a built rw-task image: the two labels every consumer of this
 image reads, and the bundle host actually running a task from each of the
-two fixture bundles under tests/fixtures/.
+two fixture bundles under tests/fixtures/, under the same read-only root
+filesystem + tmpfs `/tmp` hardening the image is built for.
 
 The image's own manifest/schemas smoke checks (rwtask --help, the capability
 manifest label, `rwtask serve` logging that it loaded rw-task) are the
 reusable capability-image workflow's job, not this script's -- see
 .github/workflows/build-push.yaml's `smoke-command`. This script covers what
 that workflow cannot know how to check: that rw-task's bundle host actually
-runs a bash task and a Python task end to end, and that the
+runs a bash task and a Python task end to end (see run_bundle_task's own
+docstring for why that runs `--read-only`/`--tmpfs`), and that the
 com.runwhen.rw-task.toolbox label this repo generates (see
 scripts/gen_toolbox_label.py) is present and well-formed on the image it
 describes.
@@ -99,12 +101,25 @@ def check_capability_label(image: str) -> None:
 def run_bundle_task(image: str, bundle: str, task: str, inputs: dict) -> dict:
     """`rwtask run --local` against one fixture bundle, mounted read-only
     into the container -- the same code path `rwtask serve` runs a bundle
-    request through, with no relay involved."""
+    request through, with no relay involved.
+
+    Run under `--read-only` with a fresh `--tmpfs /tmp`, not a plain `docker
+    run`: this is the pod hardening `capabilities/rw-task/manifest.yaml` and
+    `Dockerfile.rw-task` are built for (a read-only root filesystem, a
+    tmpfs-backed /tmp), and it's the one scenario that would NOT be caught by
+    building the image alone -- the bundle host has to actually write each
+    request's scratch files somewhere under a filesystem that starts empty
+    at container start, not whatever happened to survive from the image's
+    own build layer.
+    """
     proc = subprocess.run(
         [
             "docker",
             "run",
             "--rm",
+            "--read-only",
+            "--tmpfs",
+            "/tmp:rw,uid=1000,gid=1000",
             "-v",
             f"{FIXTURES}:/fixtures:ro",
             image,
