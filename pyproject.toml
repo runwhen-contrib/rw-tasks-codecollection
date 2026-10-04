@@ -15,7 +15,7 @@ dependencies = [
     # so this is installed in its own, non-hash-checked `pip install` step
     # in Dockerfile.rw-task (see that file's comment), which pins the same
     # release -- keep the two in step.
-    "runwhen-capability @ git+https://github.com/theyashl/runwhen-capability@c8c9e370cbd568c0f2dad7a68995cb9c21a4cd79",
+    "runwhen-capability @ git+https://github.com/theyashl/runwhen-capability@0aac31522b0cb1aa4f193f494c109417d2070fe5",
 ]
 
 [project.optional-dependencies]
