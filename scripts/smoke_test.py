@@ -329,9 +329,8 @@ def check_runtime_commands(image: str) -> None:
     checks above. A name missing here means `validate` stays silent about
     a command that would fail with exit 127 at run time.
 
-    An SDK too old to ship RW_TASK_COMMANDS has nothing to check: that is
-    reported as SKIPPED, not failed, so the check starts biting with the
-    SDK pin that introduces the list.
+    An SDK without RW_TASK_COMMANDS fails the check: authors would get no
+    W_UNKNOWN_COMMAND warnings from it.
     """
     proc = subprocess.run(
         [
@@ -357,8 +356,9 @@ def check_runtime_commands(image: str) -> None:
             f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
         )
     if "NO_COMMAND_LIST" in proc.stdout:
-        print("runtime commands: SKIPPED, this image's SDK has no RW_TASK_COMMANDS")
-        return
+        raise SmokeTestFailure(
+            "this image's SDK has no RW_TASK_COMMANDS: pin an SDK that ships it"
+        )
     lines = dict(line.split(" ", 1) for line in proc.stdout.splitlines() if " " in line)
     missing = lines.get("MISSING", "").split()
     if missing or "CHECKED" not in lines:
