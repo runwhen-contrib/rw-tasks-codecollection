@@ -14,3 +14,9 @@ tasks:
       greeting: { type: string, default: "hello from rw-task", runtime: true }
     outputs:
       message: { schema: "{ text: string }" }
+  - name: call-missing-tool
+    file: tasks/call_missing_tool.sh
+    description: Calls a command the image doesn't have, then carries on (must fail)
+    readOnly: true
+    outputs:
+      message: { schema: "{ text: string }" }

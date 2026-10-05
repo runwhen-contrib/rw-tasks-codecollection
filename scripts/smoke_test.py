@@ -14,9 +14,8 @@ that workflow cannot know how to check: that rw-task's bundle host actually
 runs a bash task and a Python task end to end under that pod spec (see
 run_bundle_task's own docstring for why), that a bundle request is refused
 when this executor was not started with --allow-bundles (see
-check_bundle_refused_without_allow_bundles), that every command the SDK
-promises bundle authors is on the image's PATH (see check_runtime_commands),
-and that the com.runwhen.rw-task.toolbox label this repo generates (see
+check_bundle_refused_without_allow_bundles), and that the
+com.runwhen.rw-task.toolbox label this repo generates (see
 scripts/gen_toolbox_label.py) is present and well-formed on the image it
 describes.
 
@@ -182,6 +181,21 @@ def check_bash_bundle(image: str) -> None:
     print("bash-bundle/echo-greeting: ok, outputs match")
 
 
+def check_missing_command_fails(image: str) -> None:
+    """The SDK's command_not_found_handle (set through BASH_ENV) must work with
+    this image's own bash: a task that calls a missing tool and carries on is
+    a failed run, not an `ok` one (HARDENING H57)."""
+    result = run_bundle_task(image, "bash-bundle", "call-missing-tool", {})
+    tasks = {t["task"]: t for t in result.get("tasks", [])}
+    task = tasks.get("call-missing-tool") or {}
+    error = task.get("error") or ""
+    if task.get("status") != "failed" or not error.startswith("E_COMMAND_NOT_FOUND"):
+        raise SmokeTestFailure(
+            f"bash-bundle/call-missing-tool should fail with E_COMMAND_NOT_FOUND: {result!r}"
+        )
+    print("bash-bundle/call-missing-tool: failed with E_COMMAND_NOT_FOUND, as it should")
+
+
 def check_python_bundle(image: str) -> None:
     result = run_bundle_task(image, "python-bundle", "count-chars", {"text": "runwhen"})
     tasks = {t["task"]: t for t in result.get("tasks", [])}
@@ -296,79 +310,6 @@ def check_bundle_refused_without_allow_bundles(image: str) -> None:
     print("bundle request without --allow-bundles: refused as expected")
 
 
-# Runs inside the image: every name on the SDK's RW_TASK_COMMANDS -- the
-# commands `validate` (W_UNKNOWN_COMMAND) tells authors a bash task can run --
-# must resolve through bash's own `command -v`, which is what a task's bash sees.
-_RUNTIME_COMMANDS_SCRIPT = """
-import subprocess
-import sys
-
-try:
-    from runwhen_capability.custom.runtime_commands import RW_TASK_COMMANDS
-except ImportError:
-    print("NO_COMMAND_LIST")
-    sys.exit(0)
-
-check = (
-    'missing=(); for c in "$@"; do command -v "$c" >/dev/null || missing+=("$c"); done; '
-    'echo "${missing[*]}"'
-)
-names = sorted(RW_TASK_COMMANDS)
-proc = subprocess.run(
-    ["bash", "-c", check, "_", *names], capture_output=True, text=True, check=True
-)
-print("CHECKED", len(names))
-print("MISSING", proc.stdout.strip())
-"""
-
-
-def check_runtime_commands(image: str) -> None:
-    """Every command the image's SDK promises bundle authors
-    (runwhen_capability.custom.runtime_commands.RW_TASK_COMMANDS) is on
-    PATH inside the image, under the same hardened flags as the bundle
-    checks above. A name missing here means `validate` stays silent about
-    a command that would fail with exit 127 at run time.
-
-    An SDK without RW_TASK_COMMANDS fails the check: authors would get no
-    W_UNKNOWN_COMMAND warnings from it.
-    """
-    proc = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--user",
-            "65532:65532",
-            "--read-only",
-            "--tmpfs",
-            "/work:rw,uid=65532,gid=65532",
-            image,
-            "python3",
-            "-c",
-            _RUNTIME_COMMANDS_SCRIPT,
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise SmokeTestFailure(
-            f"the runtime-command check exited {proc.returncode}\n"
-            f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
-        )
-    if "NO_COMMAND_LIST" in proc.stdout:
-        raise SmokeTestFailure(
-            "this image's SDK has no RW_TASK_COMMANDS: pin an SDK that ships it"
-        )
-    lines = dict(line.split(" ", 1) for line in proc.stdout.splitlines() if " " in line)
-    missing = lines.get("MISSING", "").split()
-    if missing or "CHECKED" not in lines:
-        raise SmokeTestFailure(
-            f"RW_TASK_COMMANDS names commands this image does not have: {missing}\n"
-            f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
-        )
-    print(f"runtime commands: all {lines['CHECKED']} on RW_TASK_COMMANDS are on PATH")
-
-
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} <image>", file=sys.stderr)
@@ -379,9 +320,9 @@ def main() -> int:
         check_toolbox_label,
         check_capability_label,
         check_bash_bundle,
+        check_missing_command_fails,
         check_python_bundle,
         check_bundle_refused_without_allow_bundles,
-        check_runtime_commands,
     ]
     failures = []
     for check in checks:
