@@ -181,6 +181,21 @@ def check_bash_bundle(image: str) -> None:
     print("bash-bundle/echo-greeting: ok, outputs match")
 
 
+def check_missing_command_fails(image: str) -> None:
+    """The SDK's command_not_found_handle (set through BASH_ENV) must work with
+    this image's own bash: a task that calls a missing tool and carries on is
+    a failed run, not an `ok` one."""
+    result = run_bundle_task(image, "bash-bundle", "call-missing-tool", {})
+    tasks = {t["task"]: t for t in result.get("tasks", [])}
+    task = tasks.get("call-missing-tool") or {}
+    error = task.get("error") or ""
+    if task.get("status") != "failed" or not error.startswith("E_COMMAND_NOT_FOUND"):
+        raise SmokeTestFailure(
+            f"bash-bundle/call-missing-tool should fail with E_COMMAND_NOT_FOUND: {result!r}"
+        )
+    print("bash-bundle/call-missing-tool: failed with E_COMMAND_NOT_FOUND, as it should")
+
+
 def check_python_bundle(image: str) -> None:
     result = run_bundle_task(image, "python-bundle", "count-chars", {"text": "runwhen"})
     tasks = {t["task"]: t for t in result.get("tasks", [])}
@@ -305,6 +320,7 @@ def main() -> int:
         check_toolbox_label,
         check_capability_label,
         check_bash_bundle,
+        check_missing_command_fails,
         check_python_bundle,
         check_bundle_refused_without_allow_bundles,
     ]
