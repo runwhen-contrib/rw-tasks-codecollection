@@ -184,7 +184,7 @@ def check_bash_bundle(image: str) -> None:
 def check_missing_command_fails(image: str) -> None:
     """The SDK's command_not_found_handle (set through BASH_ENV) must work with
     this image's own bash: a task that calls a missing tool and carries on is
-    a failed run, not an `ok` one (HARDENING H57)."""
+    a failed run, not an `ok` one."""
     result = run_bundle_task(image, "bash-bundle", "call-missing-tool", {})
     tasks = {t["task"]: t for t in result.get("tasks", [])}
     task = tasks.get("call-missing-tool") or {}
