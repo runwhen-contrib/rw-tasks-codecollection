@@ -215,6 +215,7 @@ def check_python_bundle(image: str) -> None:
 # fake session hands back one bundle-shaped "next task" response, then
 # records what gets posted back as the result.
 _BUNDLE_REFUSAL_SCRIPT = """
+import json as jsonlib
 from pathlib import Path
 
 from runwhen_capability.serve import BUNDLES_NOT_ALLOWED, serve
@@ -245,8 +246,10 @@ class FakeSession:
     def __init__(self):
         self.calls = []
 
-    def post(self, url, json=None, timeout=None, headers=None):
-        self.calls.append((url, json))
+    def post(self, url, json=None, data=None, timeout=None, headers=None):
+        # serve() polls with json= but posts the result as encoded JSON bytes
+        # in data= (SDK 0.4.0+): record the decoded body either way.
+        self.calls.append((url, jsonlib.loads(data) if data is not None else json))
         if url.endswith("/v1/tasks/next"):
             return FakeResponse(200, bundle_task)
         return FakeResponse(200, {})
