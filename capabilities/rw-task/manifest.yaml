@@ -33,7 +33,12 @@ execution:
     cpuLimit: "1"
     memoryRequest: "256Mi"
     memoryLimit: "1Gi"
-  workSizeLimit: "512Mi"
+  # Room on /work for the files a bundle stages as artifacts before they
+  # are uploaded.
+  workSizeLimit: "2Gi"
+  # The largest inline result a run may return. Anything bigger belongs in
+  # an artifact (rw_artifact, or a file in $RW_ARTIFACTS_DIR).
+  maxResultBytes: "1Mi"
   # Explicit even though false is already the platform default: this image
   # executes arbitrary, unreviewed third-party task code (a workspace
   # author's own bash/Python), so it must never carry a projected
