@@ -36,8 +36,10 @@ execution:
   # Room on /work for the files a bundle stages as artifacts before they
   # are uploaded.
   workSizeLimit: "2Gi"
-  # The largest inline result a run may return. Anything bigger belongs in
-  # an artifact (rw_artifact, or a file in $RW_ARTIFACTS_DIR).
+  # The cap on the whole inline result body a request posts: outputs, log
+  # tails and JSON framing. Larger data belongs in a declared artifact
+  # output (rw_artifact or $RW_ARTIFACTS_DIR in bash, ctx.artifacts in
+  # Python).
   maxResultBytes: "1Mi"
   # Explicit even though false is already the platform default: this image
   # executes arbitrary, unreviewed third-party task code (a workspace
