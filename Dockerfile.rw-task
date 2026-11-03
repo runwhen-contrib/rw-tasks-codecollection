@@ -30,7 +30,7 @@
 #     package database, so the SBOM's PURL per component is what makes
 #     these two CVE-matchable at all.
 #   runwhen-capability (the SDK) -- pinned to a full commit SHA (the
-#     contracts-v2 line on its v13/plugins branch; moves to a release tag
+#     contracts-v3 line on its v13/plugins branch; moves to a release tag
 #     once one is cut), via pyproject.toml, which the builder stage
 #     installs. pip's --require-hashes mode does not support VCS
 #     requirements at all, so this is installed in its OWN,
