@@ -11,12 +11,12 @@ readme = "README.md"
 license = { file = "LICENSE" }
 dependencies = [
     # The capability SDK and its rwtask task host, pinned to a full commit SHA
-    # (v13/plugins: contracts-v3; a release tag will replace it).
+    # (v13/plugins-m3: contracts-v7; a release tag will replace it).
     # pip's --require-hashes mode does not support VCS requirements at all,
     # so this is installed in its own, non-hash-checked `pip install` step
     # in Dockerfile.rw-task (see that file's comment), which pins the same
     # release -- keep the two in step.
-    "runwhen-capability @ git+https://github.com/runwhen-contrib/runwhen-capability@6f6031d71147019b1d508e20c76ce1c76745c507",
+    "runwhen-capability @ git+https://github.com/runwhen-contrib/runwhen-capability@b18be9c22174bf76d164b3a287eefcf392a4a857",
 ]
 
 [project.optional-dependencies]
