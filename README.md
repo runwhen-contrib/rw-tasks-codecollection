@@ -125,8 +125,8 @@ workflow's `smoke-command`, after that workflow's own full multi-arch build.
 ## SDK dependency
 
 This repo depends on `runwhen_capability` and its `rwtask` host from
-[runwhen-capability](https://github.com/runwhen-contrib/runwhen-capability), pinned to a release
-tag in `pyproject.toml` and, identically, in `Dockerfile.rw-task` (pip's `--require-hashes` mode
+[runwhen-capability](https://github.com/runwhen-contrib/runwhen-capability), pinned to a full commit
+SHA (a release tag will replace it) in `pyproject.toml`, which `Dockerfile.rw-task` installs (pip's `--require-hashes` mode
 does not support VCS requirements at all, so this one dependency installs in its own,
-non-hash-checked step; see that file's header comment). Move both pins to a new release together
-when the SDK's bundle-execution contract changes.
+non-hash-checked step; see that file's header comment). Move the pin to a new release or commit, then
+run `make constraints` and `make toolbox-label`, when the SDK's bundle-execution contract changes.
